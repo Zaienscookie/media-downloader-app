@@ -20,6 +20,9 @@ import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.MediaStore;
+import android.text.SpannableString;
+import android.text.Spanned;
+import android.text.style.ForegroundColorSpan;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
@@ -70,57 +73,94 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        int p = dp(14);
-        root.setPadding(p, p, p, p);
+        root.setBackgroundColor(0xFF0B0F17);
+        int p = dp(16);
+        root.setPadding(p, dp(20), p, p);
 
         TextView title = new TextView(this);
-        title.setText("媒体批量下载");
-        title.setTextSize(22);
+        title.setTextSize(26);
         title.setTypeface(title.getTypeface(), 1);
+        SpannableString ts = new SpannableString("媒体批量下载");
+        ts.setSpan(new ForegroundColorSpan(0xFF3B82F6), 2, 4, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        title.setText(ts);
+        title.setPadding(0, 0, 0, dp(2));
         root.addView(title);
 
         TextView sub = new TextView(this);
         sub.setText("支持 Twitter/X · Bluesky · 图片/GIF — 一次粘贴多个链接，自动识别拆分");
         sub.setTextSize(12);
         sub.setTextColor(0xFF8B94A7);
-        sub.setPadding(0, dp(4), 0, dp(10));
+        sub.setPadding(0, dp(4), 0, dp(16));
         root.addView(sub);
 
         input = new EditText(this);
         input.setHint("每行一个链接，或直接粘贴一大段（自动识别其中所有链接）\n例如：\nhttps://x.com/xxx/status/123\nhttps://bsky.app/profile/xxx/post/abc\nhttps://example.com/pic.jpg");
+        input.setHintTextColor(0xFF5A657A);
+        input.setTextColor(0xFFE5E7EB);
+        input.setTextSize(14);
         input.setMinLines(4);
         input.setGravity(Gravity.TOP);
+        input.setPadding(dp(14), dp(12), dp(14), dp(12));
+        GradientDrawable ibg = new GradientDrawable();
+        ibg.setColor(0xFF131A26);
+        ibg.setCornerRadius(dp(14));
+        ibg.setStroke(dp(1), 0xFF1F2937);
+        input.setBackground(ibg);
         root.addView(input);
 
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
         bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setPadding(0, dp(14), 0, dp(4));
+
         btn = new Button(this);
         btn.setText("批量解析下载");
+        btn.setTextSize(14);
+        btn.setTextColor(0xFFFFFFFF);
+        btn.setTypeface(btn.getTypeface(), 1);
+        btn.setAllCaps(false);
+        GradientDrawable bgb = new GradientDrawable();
+        bgb.setColor(0xFF3B82F6);
+        bgb.setCornerRadius(dp(12));
+        btn.setBackground(bgb);
+        btn.setPadding(dp(18), dp(0), dp(18), dp(0));
         btn.setOnClickListener(v -> start());
         bar.addView(btn);
+
         btnProxy = new Button(this);
         btnProxy.setText("⚙️ 代理");
+        btnProxy.setTextSize(13);
+        btnProxy.setTextColor(0xFF9AA3B2);
+        btnProxy.setAllCaps(false);
+        GradientDrawable pbg = new GradientDrawable();
+        pbg.setColor(0x00000000);
+        pbg.setCornerRadius(dp(12));
+        pbg.setStroke(dp(1), 0xFF374151);
+        btnProxy.setBackground(pbg);
+        btnProxy.setPadding(dp(14), 0, dp(14), 0);
         btnProxy.setOnClickListener(v -> showProxyDialog());
         bar.addView(btnProxy);
+        root.addView(bar);
+
         TextView hint = new TextView(this);
-        hint.setText("  支持换行 / 空格 / 逗号分隔，自动去重");
+        hint.setText("支持换行 / 空格 / 逗号分隔，自动去重");
         hint.setTextSize(11);
         hint.setTextColor(0xFF5A657A);
-        bar.addView(hint);
-        root.addView(bar);
+        hint.setPadding(dp(2), 0, 0, dp(12));
+        root.addView(hint);
 
         status = new TextView(this);
         status.setTextSize(13);
         status.setTextColor(0xFF8B94A7);
-        status.setPadding(0, dp(8), 0, dp(8));
+        status.setPadding(dp(2), dp(4), 0, dp(10));
         root.addView(status);
 
         ScrollView sc = new ScrollView(this);
+        sc.setVerticalScrollBarEnabled(false);
         grid = new GridLayout(this);
         grid.setColumnCount(2);
         grid.setUseDefaultMargins(true);
-        grid.setPadding(0, dp(6), 0, dp(6));
+        grid.setPadding(0, dp(2), 0, dp(6));
         sc.addView(grid);
         root.addView(sc);
 
@@ -264,16 +304,21 @@ public class MainActivity extends Activity {
         ImageView iv = new ImageView(this);
         iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
         iv.setBackgroundColor(0xFF000000);
-        iv.setLayoutParams(new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, dp(110)));
+        GradientDrawable tg = new GradientDrawable();
+        tg.setColor(0xFF000000);
+        float[] rad = new float[]{dp(10), dp(10), dp(10), dp(10), 0, 0, 0, 0};
+        tg.setCornerRadii(rad);
+        iv.setBackground(tg);
+        iv.setLayoutParams(new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, dp(120)));
         thumb.addView(iv);
         if (it.thumb != null && !it.thumb.isEmpty()) {
             loadThumb(it, iv);
         } else {
             TextView empty = new TextView(this);
             empty.setText(it.type.equals("video") ? "🎬" : "🖼️");
-            empty.setTextSize(28);
+            empty.setTextSize(30);
             empty.setGravity(Gravity.CENTER);
-            empty.setLayoutParams(new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, dp(110)));
+            empty.setLayoutParams(new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, dp(120)));
             thumb.addView(empty);
         }
         TextView badge = new TextView(this);
@@ -286,7 +331,7 @@ public class MainActivity extends Activity {
         bd.setCornerRadius(dp(999));
         bd.setStroke(dp(1), it.type.equals("video") ? 0xFFF59E0B : 0xFF3B82F6);
         badge.setBackground(bd);
-        badge.setPadding(dp(6), dp(1), dp(6), dp(1));
+        badge.setPadding(dp(8), dp(2), dp(8), dp(2));
         FrameLayout.LayoutParams blp = new FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
         blp.gravity = Gravity.TOP | Gravity.RIGHT;
         blp.setMargins(0, dp(6), dp(6), 0);
@@ -295,10 +340,10 @@ public class MainActivity extends Activity {
 
         TextView meta = new TextView(this);
         meta.setText(it.title == null || it.title.isEmpty() ? "未命名媒体" : it.title);
-        meta.setTextSize(11);
-        meta.setTextColor(0xFFC7CEDB);
+        meta.setTextSize(12);
+        meta.setTextColor(0xFFD5DCE8);
         meta.setMaxLines(2);
-        meta.setPadding(dp(8), dp(6), dp(8), dp(8));
+        meta.setPadding(dp(10), dp(8), dp(10), dp(10));
         card.addView(meta);
 
         wrap.addView(card);
