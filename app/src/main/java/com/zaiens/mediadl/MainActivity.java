@@ -2,8 +2,10 @@ package com.zaiens.mediadl;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.ContentValues;
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.net.ConnectivityManager;
@@ -28,6 +30,7 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -40,6 +43,7 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
 import java.net.Proxy;
+import java.net.URI;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.util.ArrayList;
@@ -55,7 +59,8 @@ public class MainActivity extends Activity {
     private EditText input;
     private TextView status;
     private GridLayout grid;
-    private Button btn;
+    private Button btn, btnProxy;
+    private SharedPreferences prefs;
     private final ExecutorService pool = Executors.newFixedThreadPool(3);
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Map<String, Bitmap> thumbCache = new LinkedHashMap<>();
@@ -94,6 +99,10 @@ public class MainActivity extends Activity {
         btn.setText("批量解析下载");
         btn.setOnClickListener(v -> start());
         bar.addView(btn);
+        btnProxy = new Button(this);
+        btnProxy.setText("⚙️ 代理");
+        btnProxy.setOnClickListener(v -> showProxyDialog());
+        bar.addView(btnProxy);
         TextView hint = new TextView(this);
         hint.setText("  支持换行 / 空格 / 逗号分隔，自动去重");
         hint.setTextSize(11);
@@ -116,6 +125,34 @@ public class MainActivity extends Activity {
         root.addView(sc);
 
         setContentView(root);
+        prefs = getSharedPreferences("media_dl", MODE_PRIVATE);
+    }
+
+    private void showProxyDialog() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        int p = dp(20);
+        box.setPadding(p, dp(10), p, 0);
+        final EditText pe = new EditText(this);
+        String cur = prefs.getString("proxy_url", "");
+        pe.setHint("如 http://127.0.0.1:7890  或 socks5://127.0.0.1:7891");
+        pe.setText(cur);
+        box.addView(pe);
+        TextView tip = new TextView(this);
+        tip.setText("支持格式：\nhttp://地址:端口（clash 等）\nsocks4:// 或 socks5://（支持 SOCKS 的代理）\n留空 = 自动（读手机系统代理，VPN/TUN 模式无需配置）");
+        tip.setTextSize(12);
+        tip.setTextColor(0xFF8B94A7);
+        box.addView(tip);
+        new AlertDialog.Builder(this)
+            .setTitle("网络代理设置")
+            .setView(box)
+            .setPositiveButton("保存", (d, w) -> {
+                String v = pe.getText().toString().trim();
+                prefs.edit().putString("proxy_url", v).apply();
+                Toast.makeText(this, v.isEmpty() ? "已设为自动" : "代理已保存: " + v, Toast.LENGTH_SHORT).show();
+            })
+            .setNegativeButton("取消", null)
+            .show();
     }
 
     private int dp(int v) { return (int)(v * getResources().getDisplayMetrics().density); }
@@ -392,6 +429,23 @@ public class MainActivity extends Activity {
     }
 
     private Proxy getProxy() {
+        String cfg = prefs != null ? prefs.getString("proxy_url", "") : "";
+        if (cfg != null && !cfg.trim().isEmpty()) {
+            try {
+                String s = cfg.trim();
+                if (!s.contains("://")) s = "http://" + s;
+                URI u = URI.create(s);
+                String host = u.getHost();
+                int port = u.getPort();
+                if (host != null && port > 0) {
+                    String scheme = (u.getScheme() == null ? "" : u.getScheme()).toLowerCase();
+                    if (scheme.startsWith("socks")) {
+                        return new Proxy(Proxy.Type.SOCKS, new InetSocketAddress(host, port));
+                    }
+                    return new Proxy(Proxy.Type.HTTP, new InetSocketAddress(host, port));
+                }
+            } catch (Exception e) { }
+        }
         try {
             ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
             if (cm != null && Build.VERSION.SDK_INT >= 23) {
