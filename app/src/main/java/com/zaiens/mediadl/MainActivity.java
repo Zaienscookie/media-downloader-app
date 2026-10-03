@@ -31,6 +31,7 @@ import android.widget.FrameLayout;
 import android.widget.GridLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -67,6 +68,12 @@ public class MainActivity extends Activity {
     private final ExecutorService pool = Executors.newFixedThreadPool(3);
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Map<String, Bitmap> thumbCache = new LinkedHashMap<>();
+    private final Map<String, ProgressBar> progressBars = new LinkedHashMap<>();
+
+    private static class MediaItem {
+        String url, type, thumb, title;
+        MediaItem(String u, String t, String th, String ti) { url = u; type = t; thumb = th; title = ti; }
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -115,15 +122,15 @@ public class MainActivity extends Activity {
 
         btn = new Button(this);
         btn.setText("批量解析下载");
-        btn.setTextSize(14);
+        btn.setTextSize(16);
         btn.setTextColor(0xFFFFFFFF);
         btn.setTypeface(btn.getTypeface(), 1);
         btn.setAllCaps(false);
         GradientDrawable bgb = new GradientDrawable();
         bgb.setColor(0xFF3B82F6);
-        bgb.setCornerRadius(dp(12));
+        bgb.setCornerRadius(dp(14));
         btn.setBackground(bgb);
-        btn.setPadding(dp(18), dp(0), dp(18), dp(0));
+        btn.setPadding(dp(24), dp(10), dp(24), dp(10));
         btn.setOnClickListener(v -> start());
         bar.addView(btn);
 
@@ -140,6 +147,20 @@ public class MainActivity extends Activity {
         btnProxy.setPadding(dp(14), 0, dp(14), 0);
         btnProxy.setOnClickListener(v -> showProxyDialog());
         bar.addView(btnProxy);
+
+        Button btnAbout = new Button(this);
+        btnAbout.setText("ℹ️ 关于");
+        btnAbout.setTextSize(13);
+        btnAbout.setTextColor(0xFF9AA3B2);
+        btnAbout.setAllCaps(false);
+        GradientDrawable abg = new GradientDrawable();
+        abg.setColor(0x00000000);
+        abg.setCornerRadius(dp(12));
+        abg.setStroke(dp(1), 0xFF374151);
+        btnAbout.setBackground(abg);
+        btnAbout.setPadding(dp(14), 0, dp(14), 0);
+        btnAbout.setOnClickListener(v -> showAboutDialog());
+        bar.addView(btnAbout);
         root.addView(bar);
 
         TextView hint = new TextView(this);
@@ -166,6 +187,63 @@ public class MainActivity extends Activity {
 
         setContentView(root);
         prefs = getSharedPreferences("media_dl", MODE_PRIVATE);
+        maybeShowAbout();
+    }
+
+    private void maybeShowAbout() {
+        int shown = prefs.getInt("about_shown", 0);
+        if (shown < 5) {
+            prefs.edit().putInt("about_shown", shown + 1).apply();
+            ui.postDelayed(this::showAboutDialog, 800);
+        }
+    }
+
+    private void showAboutDialog() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        int p = dp(20);
+        box.setPadding(p, dp(12), p, dp(4));
+        TextView name = new TextView(this);
+        name.setText("📥 媒体批量下载");
+        name.setTextSize(17);
+        name.setTypeface(name.getTypeface(), 1);
+        name.setTextColor(0xFFE5E7EB);
+        box.addView(name);
+        TextView made = new TextView(this);
+        made.setText("本应用由 Zaienscookie 开发");
+        made.setTextSize(14);
+        made.setTextColor(0xFF8B94A7);
+        made.setPadding(0, dp(8), 0, dp(4));
+        box.addView(made);
+        TextView desc = new TextView(this);
+        desc.setText("开源项目，支持 Twitter/X · Bluesky · YouTube · 图片/GIF 批量下载。\n\n如果你发现 Bug、想要新功能或有任何建议，欢迎到 GitHub 提交 Issues 反馈，感谢你的支持！");
+        desc.setTextSize(13);
+        desc.setTextColor(0xFFC7CEDB);
+        desc.setLineSpacing(dp(2), 1.15f);
+        box.addView(desc);
+        TextView link = new TextView(this);
+        link.setText("🌐 https://github.com/Zaienscookie/media-downloader-app");
+        link.setTextSize(13);
+        link.setTextColor(0xFF3B82F6);
+        link.setPadding(0, dp(10), 0, dp(4));
+        link.setClickable(true);
+        link.setOnClickListener(v -> openRepo());
+        box.addView(link);
+        new AlertDialog.Builder(this)
+            .setTitle("关于")
+            .setView(box)
+            .setPositiveButton("知道了", null)
+            .setNegativeButton("去 GitHub", (d, w) -> openRepo())
+            .show();
+    }
+
+    private void openRepo() {
+        try {
+            startActivity(new android.content.Intent(android.content.Intent.ACTION_VIEW,
+                Uri.parse("https://github.com/Zaienscookie/media-downloader-app")));
+        } catch (Exception e) {
+            Toast.makeText(this, "无法打开浏览器", Toast.LENGTH_SHORT).show();
+        }
     }
 
     private void showProxyDialog() {
@@ -242,6 +320,7 @@ public class MainActivity extends Activity {
         List<String> urls = splitUrls(input.getText().toString());
         if (urls.isEmpty()) { log("请输入链接", 0xFFF87171); return; }
         grid.removeAllViews();
+        progressBars.clear();
         btn.setEnabled(false);
         log("已识别 " + urls.size() + " 个链接，解析中...");
         pool.execute(() -> {
@@ -264,33 +343,45 @@ public class MainActivity extends Activity {
                 });
                 return;
             }
-            ui.post(() -> log("解析到 " + all.size() + " 个媒体（来自 " + (urls.size() - errors.size()) + " 个链接），开始下载..."));
-            int ok = 0;
-            for (MediaItem it : all) {
-                log("下载中：" + it.title);
-                try {
-                    String fn = nameOf(it);
-                    if (it.url.contains("playlist.m3u8")) {
-                        downloadHlsToFile(it.url, fn);
-                    } else {
-                        downloadToFile(it.url, fn);
+            ui.post(() -> log("解析到 " + all.size() + " 个媒体（来自 " + (urls.size() - errors.size()) + " 个链接），排队下载中..."));
+            final List<MediaItem> flist = new ArrayList<>(all);
+            final int[] counter = {0};
+            final int[] seq = {0};
+            final Object lock = new Object();
+            for (MediaItem it : flist) {
+                final int id = seq[0]++;
+                final String fn = nameOf(it);
+                ui.post(() -> addCard(it, fn, id));
+                pool.execute(() -> {
+                    final ProgressBar pb = progressBars.get("dl_" + id);
+                    try {
+                        if (it.url.contains("playlist.m3u8")) {
+                            downloadHlsToFile(it.url, fn, pct -> ui.post(() -> {
+                                if (pb != null) pb.setProgress(pct);
+                            }));
+                        } else {
+                            downloadToFile(it.url, fn, pct -> ui.post(() -> {
+                                if (pb != null) pb.setProgress(pct);
+                            }));
+                        }
+                        if (pb != null) ui.post(() -> pb.setProgress(100));
+                    } catch (Exception e) {
+                        log("下载失败: " + it.url + " " + e.getMessage(), 0xFFF87171);
                     }
-                    ui.post(() -> addCard(it));
-                    ok++;
-                } catch (Exception e) {
-                    log("下载失败: " + it.url + " " + e.getMessage(), 0xFFF87171);
-                }
+                    synchronized (lock) { counter[0]++; }
+                    if (counter[0] == flist.size()) {
+                        ui.post(() -> {
+                            log("✅ 完成：" + flist.size() + " 个媒体已保存到系统「下载」目录"
+                                + (errors.isEmpty() ? "" : "，另有 " + errors.size() + " 个链接解析失败"), 0xFF4ADE80);
+                            btn.setEnabled(true);
+                        });
+                    }
+                });
             }
-            final int fok = ok;
-            ui.post(() -> {
-                log("✅ 完成：" + fok + "/" + all.size() + " 已保存到系统「下载」目录"
-                    + (errors.isEmpty() ? "" : "，另有 " + errors.size() + " 个链接失败"), 0xFF4ADE80);
-                btn.setEnabled(true);
-            });
         });
     }
 
-    private void addCard(MediaItem it) {
+    private void addCard(MediaItem it, String fn, int id) {
         FrameLayout wrap = new FrameLayout(this);
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
@@ -309,7 +400,7 @@ public class MainActivity extends Activity {
         float[] rad = new float[]{dp(10), dp(10), dp(10), dp(10), 0, 0, 0, 0};
         tg.setCornerRadii(rad);
         iv.setBackground(tg);
-        iv.setLayoutParams(new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, dp(120)));
+        iv.setLayoutParams(new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, dp(110)));
         thumb.addView(iv);
         if (it.thumb != null && !it.thumb.isEmpty()) {
             loadThumb(it, iv);
@@ -318,7 +409,7 @@ public class MainActivity extends Activity {
             empty.setText(it.type.equals("video") ? "🎬" : "🖼️");
             empty.setTextSize(30);
             empty.setGravity(Gravity.CENTER);
-            empty.setLayoutParams(new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, dp(120)));
+            empty.setLayoutParams(new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, dp(110)));
             thumb.addView(empty);
         }
         TextView badge = new TextView(this);
@@ -343,8 +434,23 @@ public class MainActivity extends Activity {
         meta.setTextSize(12);
         meta.setTextColor(0xFFD5DCE8);
         meta.setMaxLines(2);
-        meta.setPadding(dp(10), dp(8), dp(10), dp(10));
+        meta.setPadding(dp(10), dp(8), dp(10), dp(2));
         card.addView(meta);
+
+        ProgressBar pb = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        pb.setMax(100);
+        pb.setProgress(0);
+        pb.setPadding(dp(10), 0, dp(10), 0);
+        try {
+            android.content.res.ColorStateList tint = android.content.res.ColorStateList.valueOf(0xFF3B82F6);
+            pb.setProgressTintList(tint);
+            pb.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF1F2937));
+        } catch (Exception e) { }
+        LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(6));
+        plp.setMargins(dp(10), dp(4), dp(10), dp(6));
+        card.addView(pb, plp);
+        progressBars.put("dl_" + id, pb);
 
         wrap.addView(card);
         grid.addView(wrap);
@@ -372,11 +478,6 @@ public class MainActivity extends Activity {
         if (it.url.contains("playlist.m3u8")) fn += ".ts";
         else if (!fn.contains(".")) fn += (it.type.equals("video") ? ".mp4" : ".jpg");
         return System.currentTimeMillis() % 10000 + "_" + fn;
-    }
-
-    private static class MediaItem {
-        String url, type, thumb, title;
-        MediaItem(String u, String t, String th, String ti) { url = u; type = t; thumb = th; title = ti; }
     }
 
     private List<MediaItem> parse(String url) throws Exception {
@@ -484,7 +585,11 @@ public class MainActivity extends Activity {
         return new String(httpGetBytes(urlStr), "UTF-8");
     }
 
-    private void downloadToFile(String urlStr, String name) throws Exception {
+    private interface ProgressCb {
+        void onProgress(int pct);
+    }
+
+    private void downloadToFile(String urlStr, String name, ProgressCb cb) throws Exception {
         HttpURLConnection c;
         Proxy p = getProxy();
         if (p != null) {
@@ -496,16 +601,24 @@ public class MainActivity extends Activity {
         c.setConnectTimeout(15000);
         c.setReadTimeout(180000);
         c.setInstanceFollowRedirects(true);
+        int total = c.getContentLength();
         OutputStream os = openDownloadStream(name);
         InputStream in = c.getInputStream();
         byte[] buf = new byte[65536];
         int n;
-        while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
+        long read = 0;
+        while ((n = in.read(buf)) > 0) {
+            os.write(buf, 0, n);
+            read += n;
+            if (cb != null && total > 0) {
+                cb.onProgress((int) Math.min(100, read * 100 / total));
+            }
+        }
         in.close();
         os.close();
     }
 
-    private void downloadHlsToFile(String masterUrl, String name) throws Exception {
+    private void downloadHlsToFile(String masterUrl, String name, ProgressCb cb) throws Exception {
         String master = httpGetString(masterUrl);
         List<String[]> variants = new ArrayList<>();
         String[] lines = master.split("\n");
@@ -555,7 +668,8 @@ public class MainActivity extends Activity {
         if (segs.isEmpty()) throw new Exception("HLS: 视频流中没有分片");
         OutputStream os = openDownloadStream(name);
         try {
-            for (String seg : segs) {
+            for (int si = 0; si < segs.size(); si++) {
+                String seg = segs.get(si);
                 String segUrl = seg.startsWith("http") ? seg : base + seg;
                 HttpURLConnection c;
                 Proxy p = getProxy();
@@ -573,6 +687,9 @@ public class MainActivity extends Activity {
                 int n;
                 while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
                 in.close();
+                if (cb != null) {
+                    cb.onProgress((int) ((si + 1L) * 100 / segs.size()));
+                }
             }
         } finally {
             os.close();
