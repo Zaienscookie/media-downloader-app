@@ -371,7 +371,13 @@ public class MainActivity extends Activity {
     }
 
     private byte[] httpGetBytes(String urlStr) throws Exception {
-        HttpURLConnection c = (HttpURLConnection) new URL(urlStr).openConnection(getProxy());
+        HttpURLConnection c;
+        Proxy p = getProxy();
+        if (p != null) {
+            c = (HttpURLConnection) new URL(urlStr).openConnection(p);
+        } else {
+            c = (HttpURLConnection) new URL(urlStr).openConnection();
+        }
         c.setRequestProperty("User-Agent", "Mozilla/5.0 (Android)");
         c.setConnectTimeout(15000);
         c.setReadTimeout(120000);
