@@ -229,7 +229,12 @@ public class MainActivity extends Activity {
             for (MediaItem it : all) {
                 log("下载中：" + it.title);
                 try {
-                    byte[] data = httpGetBytes(it.url);
+                    byte[] data;
+                    if (it.url.contains("playlist.m3u8")) {
+                        data = downloadHls(it.url);
+                    } else {
+                        data = httpGetBytes(it.url);
+                    }
                     saveToDownloads(nameOf(it), data);
                     ui.post(() -> addCard(it));
                     ok++;
@@ -320,7 +325,8 @@ public class MainActivity extends Activity {
         String base = it.url.split("\\?")[0];
         int i = base.lastIndexOf('/');
         String fn = i >= 0 ? base.substring(i + 1) : "media";
-        if (!fn.contains(".")) fn += (it.type.equals("video") ? ".mp4" : ".jpg");
+        if (it.url.contains("playlist.m3u8")) fn += ".ts";
+        else if (!fn.contains(".")) fn += (it.type.equals("video") ? ".mp4" : ".jpg");
         return System.currentTimeMillis() % 10000 + "_" + fn;
     }
 
@@ -380,8 +386,10 @@ public class MainActivity extends Activity {
                         } else if (et.equals("app.bsky.embed.video")) {
                             JSONObject blob = emb.optJSONObject("video");
                             String cid = blob.optJSONObject("ref").optString("$link");
-                            String u = "https://cdn.bsky.app/img/feed_fullsize/plain/" + did + "/" + cid + "@mp4";
-                            out.add(new MediaItem(u, "video", null, title));
+                            String mime = blob.optString("mimeType", "video/mp4");
+                            boolean gif = mime.contains("gif");
+                            String u = "https://video.bsky.app/watch/" + URLEncoder.encode(did, "UTF-8") + "/" + cid + "/playlist.m3u8";
+                            out.add(new MediaItem(u, gif ? "video" : "video", null, title));
                         }
                     }
                 }
@@ -428,6 +436,60 @@ public class MainActivity extends Activity {
         return bo.toByteArray();
     }
 
+    private String httpGetString(String urlStr) throws Exception {
+        return new String(httpGetBytes(urlStr), "UTF-8");
+    }
+
+    private byte[] downloadHls(String masterUrl) throws Exception {
+        String master = httpGetString(masterUrl);
+        List<String> variants = new ArrayList<>();
+        String[] lines = master.split("\n");
+        for (int i = 0; i < lines.length; i++) {
+            String l = lines[i].trim();
+            if (l.startsWith("#EXT-X-STREAM-INF")) {
+                if (i + 1 < lines.length) variants.add(lines[i + 1].trim());
+            }
+        }
+        String variantUrl = null;
+        if (!variants.isEmpty()) {
+            long best = -1;
+            for (String v : variants) {
+                long bw = 0;
+                java.util.regex.Matcher bm = java.util.regex.Pattern.compile("BANDWIDTH=(\\d+)").matcher(v);
+                if (bm.find()) bw = Long.parseLong(bm.group(1));
+                if (bw > best) { best = bw; variantUrl = v; }
+            }
+        } else {
+            variantUrl = masterUrl;
+        }
+        if (variantUrl == null) throw new Exception("HLS: 无可用清晰度");
+        if (!variantUrl.startsWith("http")) {
+            int slash = masterUrl.lastIndexOf('/');
+            variantUrl = masterUrl.substring(0, slash + 1) + variantUrl;
+        }
+        String vplay = httpGetString(variantUrl);
+        int q = variantUrl.indexOf('?');
+        String base = variantUrl.substring(0, (q > 0 ? q : variantUrl.length()));
+        base = base.substring(0, base.lastIndexOf('/') + 1);
+        List<String> segs = new ArrayList<>();
+        for (String l : vplay.split("\n")) {
+            String s = l.trim();
+            if (s.isEmpty() || s.startsWith("#")) continue;
+            if (s.contains("session_id=")) {
+                s = s.replaceAll("&?session_id=[^&]*", "");
+            }
+            if (!s.isEmpty()) segs.add(s);
+        }
+        if (segs.isEmpty()) throw new Exception("HLS: 视频流中没有分片");
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        for (String seg : segs) {
+            String segUrl = seg.startsWith("http") ? seg : base + seg;
+            byte[] b = httpGetBytes(segUrl);
+            out.write(b);
+        }
+        return out.toByteArray();
+    }
+
     private Proxy getProxy() {
         String cfg = prefs != null ? prefs.getString("proxy_url", "") : "";
         if (cfg != null && !cfg.trim().isEmpty()) {
@@ -466,10 +528,17 @@ public class MainActivity extends Activity {
     }
 
     private void saveToDownloads(String name, byte[] data) throws Exception {
+        String mime;
+        if (name.endsWith(".ts")) mime = "video/mp2t";
+        else if (name.endsWith(".mp4")) mime = "video/mp4";
+        else if (name.endsWith(".gif")) mime = "image/gif";
+        else if (name.endsWith(".png")) mime = "image/png";
+        else if (name.endsWith(".webp")) mime = "image/webp";
+        else mime = "image/jpeg";
         if (Build.VERSION.SDK_INT >= 29) {
             ContentValues cv = new ContentValues();
             cv.put(MediaStore.Downloads.DISPLAY_NAME, name);
-            cv.put(MediaStore.Downloads.MIME_TYPE, name.endsWith(".mp4") ? "video/mp4" : "image/jpeg");
+            cv.put(MediaStore.Downloads.MIME_TYPE, mime);
             Uri uri = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv);
             if (uri != null) {
                 OutputStream os = getContentResolver().openOutputStream(uri);
