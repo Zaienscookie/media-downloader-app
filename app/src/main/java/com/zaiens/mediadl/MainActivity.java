@@ -229,13 +229,12 @@ public class MainActivity extends Activity {
             for (MediaItem it : all) {
                 log("下载中：" + it.title);
                 try {
-                    byte[] data;
+                    String fn = nameOf(it);
                     if (it.url.contains("playlist.m3u8")) {
-                        data = downloadHls(it.url);
+                        downloadHlsToFile(it.url, fn);
                     } else {
-                        data = httpGetBytes(it.url);
+                        downloadToFile(it.url, fn);
                     }
-                    saveToDownloads(nameOf(it), data);
                     ui.post(() -> addCard(it));
                     ok++;
                 } catch (Exception e) {
@@ -386,10 +385,10 @@ public class MainActivity extends Activity {
                         } else if (et.equals("app.bsky.embed.video")) {
                             JSONObject blob = emb.optJSONObject("video");
                             String cid = blob.optJSONObject("ref").optString("$link");
-                            String mime = blob.optString("mimeType", "video/mp4");
-                            boolean gif = mime.contains("gif");
-                            String u = "https://video.bsky.app/watch/" + URLEncoder.encode(did, "UTF-8") + "/" + cid + "/playlist.m3u8";
-                            out.add(new MediaItem(u, gif ? "video" : "video", null, title));
+                            String enc = URLEncoder.encode(did, "UTF-8");
+                            String u = "https://video.bsky.app/watch/" + enc + "/" + cid + "/playlist.m3u8";
+                            String th = "https://video.bsky.app/watch/" + enc + "/" + cid + "/thumbnail.jpg";
+                            out.add(new MediaItem(u, "video", th, title));
                         }
                     }
                 }
@@ -440,24 +439,52 @@ public class MainActivity extends Activity {
         return new String(httpGetBytes(urlStr), "UTF-8");
     }
 
-    private byte[] downloadHls(String masterUrl) throws Exception {
+    private void downloadToFile(String urlStr, String name) throws Exception {
+        HttpURLConnection c;
+        Proxy p = getProxy();
+        if (p != null) {
+            c = (HttpURLConnection) new URL(urlStr).openConnection(p);
+        } else {
+            c = (HttpURLConnection) new URL(urlStr).openConnection();
+        }
+        c.setRequestProperty("User-Agent", "Mozilla/5.0 (Android)");
+        c.setConnectTimeout(15000);
+        c.setReadTimeout(180000);
+        c.setInstanceFollowRedirects(true);
+        OutputStream os = openDownloadStream(name);
+        InputStream in = c.getInputStream();
+        byte[] buf = new byte[65536];
+        int n;
+        while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
+        in.close();
+        os.close();
+    }
+
+    private void downloadHlsToFile(String masterUrl, String name) throws Exception {
         String master = httpGetString(masterUrl);
-        List<String> variants = new ArrayList<>();
+        List<String[]> variants = new ArrayList<>();
         String[] lines = master.split("\n");
         for (int i = 0; i < lines.length; i++) {
             String l = lines[i].trim();
             if (l.startsWith("#EXT-X-STREAM-INF")) {
-                if (i + 1 < lines.length) variants.add(lines[i + 1].trim());
+                if (i + 1 < lines.length) {
+                    long bw = 0;
+                    long res = 0;
+                    java.util.regex.Matcher bm = java.util.regex.Pattern.compile("BANDWIDTH=(\\d+)").matcher(l);
+                    if (bm.find()) bw = Long.parseLong(bm.group(1));
+                    java.util.regex.Matcher rm = java.util.regex.Pattern.compile("RESOLUTION=(\\d+)x(\\d+)").matcher(l);
+                    if (rm.find()) res = Long.parseLong(rm.group(1)) * Long.parseLong(rm.group(2));
+                    variants.add(new String[]{lines[i + 1].trim(), String.valueOf(bw), String.valueOf(res)});
+                }
             }
         }
         String variantUrl = null;
         if (!variants.isEmpty()) {
             long best = -1;
-            for (String v : variants) {
-                long bw = 0;
-                java.util.regex.Matcher bm = java.util.regex.Pattern.compile("BANDWIDTH=(\\d+)").matcher(v);
-                if (bm.find()) bw = Long.parseLong(bm.group(1));
-                if (bw > best) { best = bw; variantUrl = v; }
+            for (String[] v : variants) {
+                long score = Long.parseLong(v[2]);   // 优先按分辨率选
+                if (score <= 0) score = Long.parseLong(v[1]);  // 无分辨率则按码率
+                if (score > best) { best = score; variantUrl = v[0]; }
             }
         } else {
             variantUrl = masterUrl;
@@ -481,13 +508,30 @@ public class MainActivity extends Activity {
             if (!s.isEmpty()) segs.add(s);
         }
         if (segs.isEmpty()) throw new Exception("HLS: 视频流中没有分片");
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        for (String seg : segs) {
-            String segUrl = seg.startsWith("http") ? seg : base + seg;
-            byte[] b = httpGetBytes(segUrl);
-            out.write(b);
+        OutputStream os = openDownloadStream(name);
+        try {
+            for (String seg : segs) {
+                String segUrl = seg.startsWith("http") ? seg : base + seg;
+                HttpURLConnection c;
+                Proxy p = getProxy();
+                if (p != null) {
+                    c = (HttpURLConnection) new URL(segUrl).openConnection(p);
+                } else {
+                    c = (HttpURLConnection) new URL(segUrl).openConnection();
+                }
+                c.setRequestProperty("User-Agent", "Mozilla/5.0 (Android)");
+                c.setConnectTimeout(15000);
+                c.setReadTimeout(180000);
+                c.setInstanceFollowRedirects(true);
+                InputStream in = c.getInputStream();
+                byte[] buf = new byte[65536];
+                int n;
+                while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
+                in.close();
+            }
+        } finally {
+            os.close();
         }
-        return out.toByteArray();
     }
 
     private Proxy getProxy() {
@@ -527,7 +571,7 @@ public class MainActivity extends Activity {
         return null;
     }
 
-    private void saveToDownloads(String name, byte[] data) throws Exception {
+    private OutputStream openDownloadStream(String name) throws Exception {
         String mime;
         if (name.endsWith(".ts")) mime = "video/mp2t";
         else if (name.endsWith(".mp4")) mime = "video/mp4";
@@ -541,19 +585,16 @@ public class MainActivity extends Activity {
             cv.put(MediaStore.Downloads.MIME_TYPE, mime);
             Uri uri = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv);
             if (uri != null) {
-                OutputStream os = getContentResolver().openOutputStream(uri);
-                os.write(data);
-                os.close();
+                return getContentResolver().openOutputStream(uri);
             }
+            throw new Exception("无法创建下载文件");
         } else {
             if (checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
                 requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, 1);
             }
             File dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
             File f = new File(dir, name);
-            FileOutputStream fos = new FileOutputStream(f);
-            fos.write(data);
-            fos.close();
+            return new FileOutputStream(f);
         }
     }
 }
