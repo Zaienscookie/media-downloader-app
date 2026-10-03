@@ -126,13 +126,39 @@ public class MainActivity extends Activity {
 
     private List<String> splitUrls(String raw) {
         List<String> urls = new ArrayList<>();
-        java.util.regex.Matcher m = java.util.regex.Pattern.compile("https?://[^\\s,，、;；\\u4e00-\\u9fff]+").matcher(raw);
-        Set<String> seen = new HashSet<>();
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("https?://").matcher(raw);
+        List<String> segs = new ArrayList<>();
+        int last = -1;
         while (m.find()) {
-            String u = m.group();
-            if (seen.add(u)) urls.add(u);
+            if (last >= 0) {
+                String seg = raw.substring(last, m.start());
+                seg = cleanUrl(seg);
+                if (!seg.isEmpty()) segs.add(seg);
+            }
+            last = m.start();
         }
+        if (last >= 0) {
+            String seg = cleanUrl(raw.substring(last));
+            if (!seg.isEmpty()) segs.add(seg);
+        }
+        Set<String> seen = new HashSet<>();
+        for (String s : segs) if (seen.add(s)) urls.add(s);
         return urls;
+    }
+
+    private String cleanUrl(String seg) {
+        int end = seg.length();
+        while (end > 0) {
+            char c = seg.charAt(end - 1);
+            if (isUrlChar(c)) break;
+            end--;
+        }
+        return seg.substring(0, end);
+    }
+
+    private boolean isUrlChar(char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+            || "-._~:/?#[]@!$&'()*+,;=%".indexOf(c) >= 0;
     }
 
     private void start() {
